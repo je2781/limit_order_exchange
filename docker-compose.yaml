@@ -1,0 +1,71 @@
+
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: laravel-app
+    ports:
+      - "8080:80"
+    env_file: .env
+    volumes:
+      - ./app:/var/www/app
+      - ./bootstrap:/var/www/bootstrap
+      - ./config:/var/www/config
+      - ./database:/var/www/database
+      - ./resources:/var/www/resources
+      - ./routes:/var/www/routes
+      - ./composer.json:/var/www/composer.json
+      - ./composer.lock:/var/www/composer.lock
+      - ./package.json:/var/www/package.json
+      - ./package-lock.json:/var/www/package-lock.json
+      - ./config:/var/www/config
+      - ./storage:/var/www/storage
+    depends_on:
+      - admin_db
+      - redis
+    networks:
+      - app
+
+  redis:
+    image: redis:7
+    container_name: laravel-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - app
+
+  admin_db:
+    image: mysql
+    restart: always
+    ports:
+      - "3306:3306"
+    env_file: .env
+    volumes:
+      - admin_db_data:/var/lib/mysql/
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_DATABASE}
+    networks:
+      - app
+  scheduler:
+    image: php:8.4-cli
+    container_name: laravel-scheduler
+    volumes:
+      - .:/var/www
+    entrypoint: |
+      sh -c "while true; do
+        php /var/www/artisan schedule:run >> /dev/null 2>&1
+        sleep 60
+      done"
+
+volumes:
+  admin_db_data:
+
+networks:
+  app:
+
