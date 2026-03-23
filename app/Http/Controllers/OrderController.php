@@ -21,9 +21,9 @@ class OrderController extends Controller
             ->get()
             ->groupBy('side');
 
-        return response()->json([
-            'buy'  => $orders->get('buy', collect()),
-            'sell' => $orders->get('sell', collect()),
+         return response()->json([
+        'buy'  => $orders->get('buy', collect())->values(),
+        'sell' => $orders->get('sell', collect())->values(),
         ]);
     }
 

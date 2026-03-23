@@ -12,7 +12,7 @@
     */
 
 return [
-    'default' => env('BROADCAST_DRIVER', 'pusher'), // ← was missing
+    'default' => env('BROADCAST_CONNECTION', 'pusher'), // ← was missing
 
     'connections' => [ // ← connections must be nested under this key
         'pusher' => [

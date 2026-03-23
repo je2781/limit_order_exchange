@@ -13,11 +13,13 @@
         "inertiajs/inertia-laravel": "^2.0",
         "laravel/fortify": "^1.30",
         "laravel/framework": "^12.0",
+        "laravel/sanctum": "^4.3",
         "laravel/tinker": "^2.10.1",
         "laravel/wayfinder": "^0.1.9",
         "pusher/pusher-php-server": "^7.2"
     },
     "require-dev": {
+        "barryvdh/laravel-ide-helper": "^3.7",
         "fakerphp/faker": "^1.23",
         "laravel/pail": "^1.2.2",
         "laravel/pint": "^1.24",
@@ -75,6 +77,12 @@
             "@php artisan config:clear --ansi",
             "@lint:check",
             "@php artisan test"
+        ],
+        "migrate": [
+        "@php artisan migrate --force --ansi"
+        ],
+        "seed": [
+            "@php artisan db:seed --ansi"
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
