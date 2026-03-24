@@ -4,11 +4,11 @@ import { usePage } from '@inertiajs/vue3'
 import axios from 'axios'
 import Echo from 'laravel-echo'
 import Pusher from 'pusher-js'
-import LimitOrderForm from '@/components/LimitOrderForm.vue';
+import LimitOrderForm from '@/components/LimitOrderForm.vue'
+
+window.Pusher = Pusher
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-// Make Pusher available globally — Echo needs this
-window.Pusher = Pusher;
 
 interface Asset {
   symbol: string
@@ -27,7 +27,7 @@ interface Order {
   side: 'buy' | 'sell'
   price: number
   amount: number
-  status: 1 | 2 | 3 // 1=open, 2=filled, 3=cancelled
+  status: 1 | 2 | 3
 }
 
 interface Trade {
@@ -51,9 +51,61 @@ const selectedSymbol = ref('BTC')
 const symbols = ['BTC', 'ETH', 'SOL', 'XRP']
 const recentTrades = ref<{ trade: Trade; fee: number }[]>([])
 const loading = ref(true)
-const notification = ref<string | null>(null)
+const notification = ref<{ msg: string; type: 'success' | 'error' } | null>(null)
+
+const showOrderModal = ref(false)
+
+function onOrderPlaced() {
+  showOrderModal.value = false
+  fetchOrders()
+  fetchAllOrders()
+  showNotification('Order placed successfully', 'success')
+}
+
+// ─── Filters ──────────────────────────────────────────────────────────────────
+
+const filterSymbol = ref<string>('ALL')
+const filterSide = ref<'ALL' | 'buy' | 'sell'>('ALL')
+const filterStatus = ref<'ALL' | '1' | '2' | '3'>('ALL')
+
+const filteredOrders = computed(() =>
+  orders.value.filter(o => {
+    if (filterSymbol.value !== 'ALL' && o.symbol !== filterSymbol.value) return false
+    if (filterSide.value !== 'ALL' && o.side !== filterSide.value) return false
+    if (filterStatus.value !== 'ALL' && String(o.status) !== filterStatus.value) return false
+    return true
+  })
+)
+
+const activeFiltersCount = computed(() =>
+  [filterSymbol.value !== 'ALL', filterSide.value !== 'ALL', filterStatus.value !== 'ALL']
+    .filter(Boolean).length
+)
+
+function resetFilters() {
+  filterSymbol.value = 'ALL'
+  filterSide.value = 'ALL'
+  filterStatus.value = 'ALL'
+}
+
+// ─── Volume stats ─────────────────────────────────────────────────────────────
+
+const orderbookVolume = computed(() => {
+  const buys = orderbook.value.buy ?? []
+  const sells = orderbook.value.sell ?? []
+  const buyVolume = buys.reduce((sum, o) => sum + o.price * o.amount, 0)
+  const sellVolume = sells.reduce((sum, o) => sum + o.price * o.amount, 0)
+  const bestBid = buys.length ? Math.max(...buys.map(o => o.price)) : null
+  const bestAsk = sells.length ? Math.min(...sells.map(o => o.price)) : null
+  const spread = bestBid && bestAsk ? bestAsk - bestBid : null
+  return { buyVolume, sellVolume, totalOrders: buys.length + sells.length, bestBid, bestAsk, spread }
+})
 
 // ─── API ──────────────────────────────────────────────────────────────────────
+async function endSession() {
+  await axios.post('/logout')
+  window.location.href = '/login'
+}
 
 async function fetchProfile() {
   const { data } = await axios.get<Profile>('/profile')
@@ -61,17 +113,14 @@ async function fetchProfile() {
 }
 
 async function fetchOrders() {
-  const { data } = await axios.get<Order[]>(`/orders?symbol=${selectedSymbol.value}`)
-  // Store all orders passed back (open/filled/cancelled) separately
-  orderbook.value = (data as any)
+  const { data } = await axios.get(`/orders?symbol=${selectedSymbol.value}`)
+  orderbook.value = data as any
 }
 
 async function fetchAllOrders() {
-  // Fetch orders for all symbols and combine
   const results = await Promise.all(
     symbols.map(s => axios.get(`/orders?symbol=${s}`).then(r => r.data))
   )
-  // Flatten buy + sell from each symbol into a flat orders list (open only shown in orderbook)
   const all: Order[] = []
   results.forEach((r: any) => {
     if (r.buy) all.push(...r.buy)
@@ -99,29 +148,26 @@ function setupEcho() {
 
   echo.private(`user.${userId.value}`)
     .listen('OrderMatched', (e: { trade: Trade; fee: number }) => {
-      // 1. Patch trade into recent trades list
       recentTrades.value.unshift(e)
       if (recentTrades.value.length > 10) recentTrades.value.pop()
 
-      // 2. Update order status in list
       const buyOrder = orders.value.find(o => o.id === e.trade.buy_order_id)
       const sellOrder = orders.value.find(o => o.id === e.trade.sell_order_id)
       if (buyOrder) buyOrder.status = 2
       if (sellOrder) sellOrder.status = 2
 
-      // 3. Refresh balance + assets from server
       fetchProfile()
-
-      // 4. Refresh orderbook
       fetchOrders()
 
-      // 5. Show notification
-      showNotification(`Trade matched: ${e.trade.amount} ${e.trade.symbol} @ $${Number(e.trade.price).toLocaleString()}`)
+      showNotification(
+        `Matched: ${e.trade.amount} ${e.trade.symbol} @ $${Number(e.trade.price).toLocaleString()} · fee $${Number(e.fee).toFixed(2)}`,
+        'success'
+      )
     })
 }
 
-function showNotification(msg: string) {
-  notification.value = msg
+function showNotification(msg: string, type: 'success' | 'error' = 'success') {
+  notification.value = { msg, type }
   setTimeout(() => (notification.value = null), 4000)
 }
 
@@ -133,37 +179,24 @@ onMounted(async () => {
   setupEcho()
 })
 
-onUnmounted(() => {
-  echo?.disconnect()
-})
+onUnmounted(() => echo?.disconnect())
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function statusLabel(status: number) {
-  return { 1: 'Open', 2: 'Filled', 3: 'Cancelled' }[status] ?? '—'
-}
-
-function statusClass(status: number) {
-  return {
-    1: 'text-amber-400 bg-amber-400/10',
-    2: 'text-emerald-400 bg-emerald-400/10',
-    3: 'text-zinc-500 bg-zinc-500/10',
-  }[status] ?? ''
-}
-
-function usd(val: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val)
-}
-
-function num(val: number, dp = 8) {
-  return Number(val).toFixed(dp)
-}
+const statusLabel = (s: number) => ({ 1: 'Open', 2: 'Filled', 3: 'Cancelled' }[s] ?? '—')
+const statusClass = (s: number) => ({
+  1: 'text-amber-400 bg-amber-400/10',
+  2: 'text-emerald-400 bg-emerald-400/10',
+  3: 'text-zinc-500 bg-zinc-500/10',
+}[s] ?? '')
+const usd = (v: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v)
+const num = (v: number, dp = 8) => Number(v).toFixed(dp)
 </script>
 
 <template>
   <div class="min-h-screen bg-zinc-950 text-zinc-100 font-mono">
 
-    <!-- Notification toast -->
+    <!-- Toast -->
     <Transition
       enter-active-class="transition duration-300 ease-out"
       enter-from-class="translate-y-4 opacity-0"
@@ -172,13 +205,18 @@ function num(val: number, dp = 8) {
     >
       <div
         v-if="notification"
-        class="fixed bottom-6 right-6 z-50 bg-emerald-500 text-black text-xs font-bold px-4 py-3 rounded-lg shadow-xl shadow-emerald-500/20 max-w-sm"
+        :class="[
+          'fixed bottom-6 right-6 z-50 text-xs font-bold px-4 py-3 rounded-lg shadow-xl max-w-sm',
+          notification.type === 'success'
+            ? 'bg-emerald-500 text-black shadow-emerald-500/20'
+            : 'bg-rose-500 text-white shadow-rose-500/20'
+        ]"
       >
-        ⚡ {{ notification }}
+        {{ notification.type === 'success' ? '⚡' : '✕' }} {{ notification.msg }}
       </div>
     </Transition>
 
-    <!-- Loading skeleton -->
+    <!-- Loading -->
     <div v-if="loading" class="flex items-center justify-center min-h-screen">
       <div class="flex flex-col items-center gap-4">
         <div class="w-10 h-10 border-2 border-zinc-700 border-t-emerald-400 rounded-full animate-spin" />
@@ -187,210 +225,287 @@ function num(val: number, dp = 8) {
     </div>
 
     <template v-else>
-      <!-- Header -->
       <header class="border-b border-zinc-800 px-6 py-4 flex items-center justify-between">
         <div class="flex items-center gap-3">
           <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           <span class="text-xs tracking-[0.2em] uppercase text-zinc-400">Wallet Overview</span>
         </div>
-        <div class="text-xs text-zinc-600 tracking-widest">LIVE</div>
+        <div class="inine-flex gap-3 flex-row items-center">
+                <!-- Trigger button -->
+            <button
+                @click="showOrderModal = true"
+                class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold tracking-[0.15em] uppercase rounded-lg transition-all active:scale-[0.98]"
+            >
+                + Place Order
+            </button>
+            <form @submit.prevent="endSession">
+                <button class="text-xs text-zinc-400 font-semibold tracking-widest" type="submit">LOGOUT</button>
+            </form>
+        </div>
       </header>
 
-      <section class="max-w-7xl mx-auto px-6 py-8 flex flex-col gap-8 items-center">
-
+      <section class="max-w-7xl mx-auto px-6 py-8 flex flex-col gap-8">
         <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
-            <!-- ── LEFT COLUMN ── -->
-            <div class="xl:col-span-1 flex flex-col gap-6">
+          <!-- LEFT -->
+          <div class="xl:col-span-1 flex flex-col gap-6">
 
-            <!-- USD Balance card -->
             <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-                <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500 mb-3">USD Balance</p>
-                <p class="text-4xl font-bold tracking-tight text-white tabular-nums">
-                {{ usd(profile.balance) }}
-                </p>
-                <p class="text-[10px] text-zinc-600 mt-2 tracking-widest">AVAILABLE FUNDS</p>
+              <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500 mb-3">USD Balance</p>
+              <p class="text-4xl font-bold tracking-tight text-white tabular-nums">{{ usd(profile.balance) }}</p>
+              <p class="text-[10px] text-zinc-600 mt-2 tracking-widest">AVAILABLE FUNDS</p>
             </div>
 
-            <!-- Asset balances -->
             <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-                <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500 mb-4">Asset Balances</p>
-
-                <div v-if="profile.assets.length === 0" class="text-zinc-600 text-xs">
-                No assets held.
-                </div>
-
-                <div v-else class="flex flex-col gap-3">
+              <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500 mb-4">Asset Balances</p>
+              <p v-if="profile.assets.length === 0" class="text-zinc-600 text-xs">No assets held.</p>
+              <div v-else class="flex flex-col gap-3">
                 <div
-                    v-for="asset in profile.assets"
-                    :key="asset.symbol"
-                    class="flex items-center justify-between border border-zinc-800 rounded-lg px-4 py-3 hover:border-zinc-700 transition-colors"
+                  v-for="asset in profile.assets" :key="asset.symbol"
+                  class="flex items-center justify-between border border-zinc-800 rounded-lg px-4 py-3 hover:border-zinc-700 transition-colors"
                 >
-                    <div class="flex items-center gap-3">
+                  <div class="flex items-center gap-3">
                     <div class="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-300">
-                        {{ asset.symbol.slice(0, 2) }}
+                      {{ asset.symbol.slice(0, 2) }}
                     </div>
                     <span class="text-sm font-semibold text-zinc-200">{{ asset.symbol }}</span>
-                    </div>
-                    <div class="text-right">
+                  </div>
+                  <div class="text-right">
                     <p class="text-sm tabular-nums text-white">{{ num(asset.amount) }}</p>
-                    <p v-if="asset.locked_amount > 0" class="text-[10px] text-amber-500 tabular-nums">
-                        {{ num(asset.locked_amount) }} locked
-                    </p>
-                    </div>
+                    <p v-if="asset.locked_amount > 0" class="text-[10px] text-amber-500 tabular-nums">{{ num(asset.locked_amount) }} locked</p>
+                  </div>
                 </div>
-                </div>
+              </div>
             </div>
 
-            <!-- Recent matched trades -->
             <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-                <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500 mb-4">Recent Matches</p>
-                <div v-if="recentTrades.length === 0" class="text-zinc-600 text-xs">
-                No matches yet — listening live.
-                </div>
-                <div v-else class="flex flex-col gap-2">
+              <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500 mb-4">Recent Matches</p>
+              <p v-if="recentTrades.length === 0" class="text-zinc-600 text-xs">No matches yet — listening live.</p>
+              <div v-else class="flex flex-col gap-2">
                 <div
-                    v-for="(entry, i) in recentTrades"
-                    :key="i"
-                    class="flex justify-between items-center text-xs border-b border-zinc-800 pb-2 last:border-0"
+                  v-for="(entry, i) in recentTrades" :key="i"
+                  class="flex justify-between items-center text-xs border-b border-zinc-800 pb-2 last:border-0"
                 >
-                    <div>
+                  <div>
                     <span class="text-emerald-400 font-semibold">{{ entry.trade.symbol }}</span>
                     <span class="text-zinc-400 ml-2">{{ num(entry.trade.amount, 6) }}</span>
-                    </div>
-                    <div class="text-right">
+                  </div>
+                  <div class="text-right">
                     <p class="text-white tabular-nums">{{ usd(entry.trade.price) }}</p>
                     <p class="text-[10px] text-rose-400">fee {{ usd(entry.fee) }}</p>
-                    </div>
+                  </div>
                 </div>
-                </div>
+              </div>
             </div>
-            </div>
+          </div>
 
-            <!-- ── RIGHT COLUMN ── -->
-            <div class="xl:col-span-2 flex flex-col gap-6">
+          <!-- RIGHT -->
+          <div class="xl:col-span-2 flex flex-col gap-6">
 
-            <!-- Symbol selector + Orderbook -->
+            <!-- Orderbook + Volume -->
             <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-                <div class="flex items-center justify-between mb-5">
+              <div class="flex items-center justify-between mb-5">
                 <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500">Orderbook</p>
                 <div class="flex gap-1">
-                    <button
-                    v-for="sym in symbols"
-                    :key="sym"
+                  <button
+                    v-for="sym in symbols" :key="sym"
                     @click="selectSymbol(sym)"
                     :class="[
-                        'px-3 py-1 rounded text-[11px] font-bold tracking-widest transition-all',
-                        selectedSymbol === sym
-                        ? 'bg-emerald-500 text-black'
-                        : 'text-zinc-500 hover:text-zinc-300 border border-zinc-800 hover:border-zinc-600'
+                      'px-3 py-1 rounded text-[11px] font-bold tracking-widest transition-all',
+                      selectedSymbol === sym ? 'bg-emerald-500 text-black' : 'text-zinc-500 hover:text-zinc-300 border border-zinc-800 hover:border-zinc-600'
                     ]"
-                    >
-                    {{ sym }}
-                    </button>
+                  >{{ sym }}</button>
                 </div>
-                </div>
+              </div>
 
-                <div class="grid grid-cols-2 gap-4">
-                <!-- Bids (buy) -->
-                <div>
-                    <p class="text-[10px] uppercase tracking-widest text-emerald-500 mb-2">Bids</p>
-                    <div class="flex flex-col gap-1">
-                    <div class="grid grid-cols-2 text-[10px] text-zinc-600 uppercase tracking-widest mb-1 px-1">
-                        <span>Price</span><span class="text-right">Amount</span>
-                    </div>
-                    <div
-                        v-for="order in orderbook.buy"
-                        :key="order.id"
-                        class="relative grid grid-cols-2 text-xs px-2 py-1.5 rounded overflow-hidden"
-                    >
-                        <div
-                        class="absolute inset-0 bg-emerald-500/5 rounded"
-                        :style="{ width: `${Math.min(100, (order.amount / 1) * 100)}%` }"
-                        />
-                        <span class="relative text-emerald-400 tabular-nums">{{ usd(order.price) }}</span>
-                        <span class="relative text-zinc-300 text-right tabular-nums">{{ num(order.amount, 4) }}</span>
-                    </div>
-                    <div v-if="!orderbook.buy?.length" class="text-zinc-700 text-xs px-2 py-2">No bids</div>
-                    </div>
+              <!-- Volume stats -->
+              <div class="grid grid-cols-4 gap-2 mb-4">
+                <div class="bg-zinc-800/50 rounded-lg px-3 py-2">
+                  <p class="text-[9px] uppercase tracking-widest text-zinc-600 mb-1">Best Bid</p>
+                  <p class="text-xs font-bold text-emerald-400 tabular-nums">{{ orderbookVolume.bestBid ? usd(orderbookVolume.bestBid) : '—' }}</p>
                 </div>
+                <div class="bg-zinc-800/50 rounded-lg px-3 py-2">
+                  <p class="text-[9px] uppercase tracking-widest text-zinc-600 mb-1">Best Ask</p>
+                  <p class="text-xs font-bold text-rose-400 tabular-nums">{{ orderbookVolume.bestAsk ? usd(orderbookVolume.bestAsk) : '—' }}</p>
+                </div>
+                <div class="bg-zinc-800/50 rounded-lg px-3 py-2">
+                  <p class="text-[9px] uppercase tracking-widest text-zinc-600 mb-1">Spread</p>
+                  <p class="text-xs font-bold text-zinc-300 tabular-nums">{{ orderbookVolume.spread != null ? usd(orderbookVolume.spread) : '—' }}</p>
+                </div>
+                <div class="bg-zinc-800/50 rounded-lg px-3 py-2">
+                  <p class="text-[9px] uppercase tracking-widest text-zinc-600 mb-1">Open Orders</p>
+                  <p class="text-xs font-bold text-zinc-300 tabular-nums">{{ orderbookVolume.totalOrders }}</p>
+                </div>
+              </div>
 
-                <!-- Asks (sell) -->
+              <!-- Buy/sell volume bar -->
+              <div v-if="orderbookVolume.buyVolume > 0 || orderbookVolume.sellVolume > 0" class="mb-5">
+                <div class="flex justify-between text-[10px] mb-1.5">
+                  <span class="text-emerald-500">Buy {{ usd(orderbookVolume.buyVolume) }}</span>
+                  <span class="text-rose-400">Sell {{ usd(orderbookVolume.sellVolume) }}</span>
+                </div>
+                <div class="h-1.5 bg-zinc-800 rounded-full overflow-hidden flex">
+                  <div
+                    class="bg-emerald-500 h-full transition-all duration-500"
+                    :style="{ width: `${(orderbookVolume.buyVolume / (orderbookVolume.buyVolume + orderbookVolume.sellVolume)) * 100}%` }"
+                  />
+                  <div class="bg-rose-500 h-full flex-1" />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-4">
                 <div>
-                    <p class="text-[10px] uppercase tracking-widest text-rose-400 mb-2">Asks</p>
-                    <div class="flex flex-col gap-1">
-                    <div class="grid grid-cols-2 text-[10px] text-zinc-600 uppercase tracking-widest mb-1 px-1">
-                        <span>Price</span><span class="text-right">Amount</span>
-                    </div>
-                    <div
-                        v-for="order in orderbook.sell"
-                        :key="order.id"
-                        class="relative grid grid-cols-2 text-xs px-2 py-1.5 rounded overflow-hidden"
-                    >
-                        <div
-                        class="absolute inset-0 bg-rose-500/5 rounded"
-                        :style="{ width: `${Math.min(100, (order.amount / 1) * 100)}%` }"
-                        />
-                        <span class="relative text-rose-400 tabular-nums">{{ usd(order.price) }}</span>
-                        <span class="relative text-zinc-300 text-right tabular-nums">{{ num(order.amount, 4) }}</span>
-                    </div>
-                    <div v-if="!orderbook.sell?.length" class="text-zinc-700 text-xs px-2 py-2">No asks</div>
-                    </div>
+                  <p class="text-[10px] uppercase tracking-widest text-emerald-500 mb-2">Bids</p>
+                  <div class="grid grid-cols-2 text-[10px] text-zinc-600 uppercase tracking-widest mb-1 px-1">
+                    <span>Price</span><span class="text-right">Amount</span>
+                  </div>
+                  <div v-for="order in orderbook.buy" :key="order.id" class="relative grid grid-cols-2 text-xs px-2 py-1.5 rounded overflow-hidden">
+                    <div class="absolute inset-0 bg-emerald-500/5 rounded" :style="{ width: `${Math.min(100, order.amount * 100)}%` }" />
+                    <span class="relative text-emerald-400 tabular-nums">{{ usd(order.price) }}</span>
+                    <span class="relative text-zinc-300 text-right tabular-nums">{{ num(order.amount, 4) }}</span>
+                  </div>
+                  <p v-if="!orderbook.buy?.length" class="text-zinc-700 text-xs px-2 py-2">No bids</p>
                 </div>
+                <div>
+                  <p class="text-[10px] uppercase tracking-widest text-rose-400 mb-2">Asks</p>
+                  <div class="grid grid-cols-2 text-[10px] text-zinc-600 uppercase tracking-widest mb-1 px-1">
+                    <span>Price</span><span class="text-right">Amount</span>
+                  </div>
+                  <div v-for="order in orderbook.sell" :key="order.id" class="relative grid grid-cols-2 text-xs px-2 py-1.5 rounded overflow-hidden">
+                    <div class="absolute inset-0 bg-rose-500/5 rounded" :style="{ width: `${Math.min(100, order.amount * 100)}%` }" />
+                    <span class="relative text-rose-400 tabular-nums">{{ usd(order.price) }}</span>
+                    <span class="relative text-zinc-300 text-right tabular-nums">{{ num(order.amount, 4) }}</span>
+                  </div>
+                  <p v-if="!orderbook.sell?.length" class="text-zinc-700 text-xs px-2 py-2">No asks</p>
                 </div>
+              </div>
             </div>
 
-            <!-- All orders table -->
+            <!-- Order history + filters -->
             <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-                <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500 mb-4">Order History</p>
-
-                <div class="overflow-x-auto">
-                <table class="w-full text-xs">
-                    <thead>
-                    <tr class="text-zinc-600 uppercase tracking-widest border-b border-zinc-800">
-                        <th class="text-left pb-3 font-normal">ID</th>
-                        <th class="text-left pb-3 font-normal">Symbol</th>
-                        <th class="text-left pb-3 font-normal">Side</th>
-                        <th class="text-right pb-3 font-normal">Price</th>
-                        <th class="text-right pb-3 font-normal">Amount</th>
-                        <th class="text-right pb-3 font-normal">Status</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <tr
-                        v-for="order in orders"
-                        :key="order.id"
-                        class="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors"
-                    >
-                        <td class="py-3 text-zinc-600">#{{ order.id }}</td>
-                        <td class="py-3 font-semibold text-zinc-200">{{ order.symbol }}</td>
-                        <td class="py-3">
-                        <span :class="order.side === 'buy' ? 'text-emerald-400' : 'text-rose-400'" class="uppercase tracking-widest">
-                            {{ order.side }}
-                        </span>
-                        </td>
-                        <td class="py-3 text-right tabular-nums text-zinc-300">{{ usd(order.price) }}</td>
-                        <td class="py-3 text-right tabular-nums text-zinc-300">{{ num(order.amount, 6) }}</td>
-                        <td class="py-3 text-right">
-                        <span :class="['text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest', statusClass(order.status)]">
-                            {{ statusLabel(order.status) }}
-                        </span>
-                        </td>
-                    </tr>
-                    <tr v-if="orders.length === 0">
-                        <td colspan="6" class="py-8 text-center text-zinc-700 text-xs tracking-widest uppercase">
-                        No orders yet
-                        </td>
-                    </tr>
-                    </tbody>
-                </table>
+              <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                  <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500">Order History</p>
+                  <span v-if="activeFiltersCount > 0" class="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full font-bold">
+                    {{ activeFiltersCount }} filter{{ activeFiltersCount > 1 ? 's' : '' }}
+                  </span>
                 </div>
-            </div>
-            </div>
-        </div>
-        <LimitOrderForm @placed="fetchOrders" />
-      </section>
+                <button v-if="activeFiltersCount > 0" @click="resetFilters" class="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors tracking-widest uppercase">
+                  Reset
+                </button>
+              </div>
 
+              <!-- Filters -->
+              <div class="flex flex-wrap gap-2 mb-4 items-center">
+
+                <div class="relative">
+                  <select v-model="filterSymbol" class="appearance-none bg-zinc-800 border border-zinc-700 text-zinc-300 text-[11px] rounded-lg px-3 py-1.5 pr-7 focus:outline-none focus:border-zinc-500 cursor-pointer">
+                    <option value="ALL">All Symbols</option>
+                    <option v-for="sym in symbols" :key="sym" :value="sym">{{ sym }}</option>
+                  </select>
+                  <svg class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-2.5 h-2.5 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+
+                <div class="flex gap-0.5 bg-zinc-800 border border-zinc-700 rounded-lg p-0.5">
+                  <button v-for="s in (['ALL', 'buy', 'sell'] as const)" :key="s" @click="filterSide = s"
+                    :class="['px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-widest transition-all',
+                      filterSide === s
+                        ? s === 'buy' ? 'bg-emerald-500 text-black' : s === 'sell' ? 'bg-rose-500 text-white' : 'bg-zinc-600 text-white'
+                        : 'text-zinc-500 hover:text-zinc-300']"
+                  >{{ s === 'ALL' ? 'Both' : s }}</button>
+                </div>
+
+                <div class="flex gap-0.5 bg-zinc-800 border border-zinc-700 rounded-lg p-0.5">
+                  <button
+                    v-for="[val, label] in ([['ALL','All'],['1','Open'],['2','Filled'],['3','Cancelled']] as [string,string][])"
+                    :key="val" @click="filterStatus = val as any"
+                    :class="['px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-widest transition-all',
+                      filterStatus === val
+                        ? val === '1' ? 'bg-amber-500/30 text-amber-300' : val === '2' ? 'bg-emerald-500/30 text-emerald-300' : val === '3' ? 'bg-zinc-600 text-zinc-300' : 'bg-zinc-600 text-white'
+                        : 'text-zinc-500 hover:text-zinc-300']"
+                  >{{ label }}</button>
+                </div>
+
+                <span class="ml-auto text-[10px] text-zinc-600 tracking-widest">{{ filteredOrders.length }}/{{ orders.length }}</span>
+              </div>
+
+              <!-- Table -->
+              <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                  <thead>
+                    <tr class="text-zinc-600 uppercase tracking-widest border-b border-zinc-800">
+                      <th class="text-left pb-3 font-normal">ID</th>
+                      <th class="text-left pb-3 font-normal">Symbol</th>
+                      <th class="text-left pb-3 font-normal">Side</th>
+                      <th class="text-right pb-3 font-normal">Price</th>
+                      <th class="text-right pb-3 font-normal">Amount</th>
+                      <th class="text-right pb-3 font-normal">Volume</th>
+                      <th class="text-right pb-3 font-normal">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="order in filteredOrders" :key="order.id" class="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors">
+                      <td class="py-3 text-zinc-600">#{{ order.id }}</td>
+                      <td class="py-3 font-semibold text-zinc-200">{{ order.symbol }}</td>
+                      <td class="py-3">
+                        <span :class="order.side === 'buy' ? 'text-emerald-400' : 'text-rose-400'" class="uppercase tracking-widest">{{ order.side }}</span>
+                      </td>
+                      <td class="py-3 text-right tabular-nums text-zinc-300">{{ usd(order.price) }}</td>
+                      <td class="py-3 text-right tabular-nums text-zinc-300">{{ num(order.amount, 6) }}</td>
+                      <td class="py-3 text-right tabular-nums text-zinc-400">{{ usd(order.price * order.amount) }}</td>
+                      <td class="py-3 text-right">
+                        <span :class="['text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest', statusClass(order.status)]">
+                          {{ statusLabel(order.status) }}
+                        </span>
+                      </td>
+                    </tr>
+                    <tr v-if="filteredOrders.length === 0">
+                      <td colspan="7" class="py-8 text-center text-zinc-700 text-xs tracking-widest uppercase">
+                        {{ orders.length > 0 ? 'No orders match filters' : 'No orders yet' }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- Modal overlay -->
+        <Transition
+        enter-active-class="transition duration-200 ease-out"
+        enter-from-class="opacity-0"
+        leave-active-class="transition duration-150 ease-in"
+        leave-to-class="opacity-0"
+        >
+            <div
+                v-if="showOrderModal"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4"
+                @click.self="showOrderModal = false"
+            >
+                <Transition
+                enter-active-class="transition duration-200 ease-out"
+                enter-from-class="scale-95 opacity-0"
+                leave-active-class="transition duration-150 ease-in"
+                leave-to-class="scale-95 opacity-0"
+                >
+                <div v-if="showOrderModal" class="relative">
+                    <!-- Close button -->
+                    <button
+                    @click="showOrderModal = false"
+                    class="absolute -top-3 -right-3 z-10 w-7 h-7 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-white flex items-center justify-center text-xs transition-colors"
+                    >
+                    ✕
+                    </button>
+                    <LimitOrderForm @placed="onOrderPlaced" @cancel="showOrderModal = false" />
+                </div>
+                </Transition>
+            </div>
+        </Transition>
+      </section>
     </template>
   </div>
 </template>

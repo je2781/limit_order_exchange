@@ -17,6 +17,7 @@ type Status = 'idle' | 'loading' | 'success' | 'error'
 
 const emit = defineEmits<{
   (e: 'placed', order: OrderPayload): void
+  (e: 'cancel'): void  
 }>()
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ const canSubmit = computed(
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
 
+
 async function submit() {
   if (!canSubmit.value) return
 
@@ -62,7 +64,7 @@ async function submit() {
   errorMsg.value = null
 
   try {
-    const { data } = await axios.post('/api/orders', form.value)
+    const { data } = await axios.post('/orders', form.value)
     status.value = 'success'
     emit('placed', data)
 
@@ -204,6 +206,13 @@ async function submit() {
         </div>
       </Transition>
 
+      <button
+  type="button"
+  @click="emit('cancel')"
+  class="w-full py-2.5 rounded-lg text-xs text-zinc-500 hover:text-zinc-300 tracking-widest uppercase transition-colors"
+>
+  Cancel
+</button>
       <!-- Submit button -->
       <button
         type="submit"
