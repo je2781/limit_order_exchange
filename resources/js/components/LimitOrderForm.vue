@@ -1,22 +1,16 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import axios from 'axios'
+import { Order, OrderPayload } from '@/types/general';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-interface OrderPayload {
-  symbol: string
-  side: 'buy' | 'sell'
-  price: number
-  amount: number
-}
 
 type Status = 'idle' | 'loading' | 'success' | 'error'
 
 // ─── Emits ────────────────────────────────────────────────────────────────────
 
 const emit = defineEmits<{
-  (e: 'placed', order: OrderPayload): void
+  (e: 'placed', sym: string): void
   (e: 'cancel'): void  
 }>()
 
@@ -66,7 +60,7 @@ async function submit() {
   try {
     const { data } = await axios.post('/api/orders', form.value)
     status.value = 'success'
-    emit('placed', data)
+    emit('placed', data.symbol)
 
     // Reset amount + price after successful placement
     form.value.price = 0

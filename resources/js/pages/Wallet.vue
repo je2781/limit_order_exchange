@@ -5,39 +5,10 @@ import axios from 'axios'
 import Echo from 'laravel-echo'
 import Pusher from 'pusher-js'
 import LimitOrderForm from '@/components/LimitOrderForm.vue'
+import { Order, OrderPayload, Profile, Trade } from '@/types/general'
 
 window.Pusher = Pusher
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface Asset {
-  symbol: string
-  amount: number
-  locked_amount: number
-}
-
-interface Profile {
-  balance: number
-  assets: Asset[]
-}
-
-interface Order {
-  id: number
-  symbol: string
-  side: 'buy' | 'sell'
-  price: number
-  amount: number
-  status: 1 | 2 | 3
-}
-
-interface Trade {
-  id: number
-  symbol: string
-  price: number
-  amount: number
-  buy_order_id: number
-  sell_order_id: number
-}
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -55,20 +26,13 @@ const notification = ref<{ msg: string; type: 'success' | 'error' } | null>(null
 
 const showOrderModal = ref(false)
 
-function onOrderPlaced() {
-  showOrderModal.value = false
-  fetchOrders()
-  fetchAllOrders()
-  showNotification('Order placed successfully', 'success')
-}
-
 // ─── Filters ──────────────────────────────────────────────────────────────────
 
 const filterSymbol = ref<string>('ALL')
 const filterSide = ref<'ALL' | 'buy' | 'sell'>('ALL')
 const filterStatus = ref<'ALL' | '1' | '2' | '3'>('ALL')
 
-const filteredOrders = computed(() =>
+let filteredOrders = computed(() =>
   orders.value.filter(o => {
     if (filterSymbol.value !== 'ALL' && o.symbol !== filterSymbol.value) return false
     if (filterSide.value !== 'ALL' && o.side !== filterSide.value) return false
@@ -104,6 +68,7 @@ const orderbookVolume = computed(() => {
 // ─── API ──────────────────────────────────────────────────────────────────────
 async function endSession() {
   await axios.post('/api/logout')
+  window.location.href = '/login';
 }
 
 async function fetchProfile() {
@@ -118,7 +83,7 @@ async function fetchOrders() {
 
 async function fetchAllOrders() {
   const results = await Promise.all(
-    symbols.map(s => axios.get(`/api/orders?symbol=${s}`).then(r => r.data))
+    symbols.map(s => axios.get(`/api/orders?symbol=${s}&all=true`).then(r => r.data))
   )
   const all: Order[] = []
   results.forEach((r: any) => {
@@ -131,6 +96,12 @@ async function fetchAllOrders() {
 async function selectSymbol(symbol: string) {
   selectedSymbol.value = symbol
   await fetchOrders()
+}
+
+async function onOrderPlaced(sym: string) {
+  showOrderModal.value = false;
+  await Promise.all([selectSymbol(sym), fetchProfile(), fetchAllOrders()])
+  showNotification('Order placed successfully', 'success')
 }
 
 // ─── Real-time ────────────────────────────────────────────────────────────────
@@ -150,10 +121,16 @@ function setupEcho() {
       recentTrades.value.unshift(e)
       if (recentTrades.value.length > 10) recentTrades.value.pop()
 
-      const buyOrder = orders.value.find(o => o.id === e.trade.buy_order_id)
-      const sellOrder = orders.value.find(o => o.id === e.trade.sell_order_id)
-      if (buyOrder) buyOrder.status = 2
-      if (sellOrder) sellOrder.status = 2
+      orders.value = orders.value.map(o => {
+        if (
+          o.status === 1 &&
+          o.symbol === e.trade.symbol &&
+          Math.abs(o.price - e.trade.price) < 0.00000001
+        ) {
+          return { ...o, status: 2 as const }
+        }
+        return o
+      })
 
       fetchProfile()
       fetchOrders()

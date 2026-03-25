@@ -10,14 +10,16 @@ use Illuminate\Support\Facades\DB;
 
 class OrderController extends Controller
 {
-    // GET /api/orders?symbol=BTC
+    // GET /api/orders?symbol=BTC&all=true
     public function index(Request $request)
     {
-        $request->validate(['symbol' => 'required|string']);
+        $request->validate(['symbol' => 'required|string', 'all' => 'string|nullable']);
 
         $orders = Order::where('symbol', $request->symbol)
-            ->where('status', 1) // open only
-            ->select('id', 'user_id', 'side', 'price', 'amount')
+            ->when(!$request->boolean('all'), function ($query) {
+                $query->where('status', 1); // open only
+            })
+            ->orderBy('created_at', 'desc')
             ->get()
             ->groupBy('side');
 
