@@ -1,11 +1,10 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Laravel\Fortify\Features;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\OrderController;
 use Illuminate\Support\Facades\Auth;
-
+use Laravel\Fortify\Features;   
 
 
 // Route::inertia('/', 'Welcome', [
@@ -17,18 +16,20 @@ use Illuminate\Support\Facades\Auth;
 // });
 
 Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/profile', [ProfileController::class, 'show']);
-    Route::get('/orders', [OrderController::class, 'index']);
-    Route::post('/orders', [OrderController::class, 'store']);
-    Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel']);
+    Route::get('/api/profile', [ProfileController::class, 'show']);
+    Route::get('/api/orders', [OrderController::class, 'index']);
+    Route::post('/api/orders', [OrderController::class, 'store']);
+    Route::post('/api/orders/{id}/cancel', [OrderController::class, 'cancel']);
 });
 
-Route::middleware(['auth:sanctum'])->get('/', fn() => inertia('Wallet'))->name('wallet');
 
-Route::post('/logout', function () {
+Route::post('/api/logout', function () {
     Auth::logout();
 
     return redirect('/login');
 })->middleware('auth')->name('logout');
+
+Route::middleware(['auth:sanctum'])->get('/', fn() => inertia('Wallet'))->name('wallet');
+
 
 require __DIR__.'/settings.php';

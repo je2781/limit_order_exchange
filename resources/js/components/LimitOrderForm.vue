@@ -64,7 +64,7 @@ async function submit() {
   errorMsg.value = null
 
   try {
-    const { data } = await axios.post('/orders', form.value)
+    const { data } = await axios.post('/api/orders', form.value)
     status.value = 'success'
     emit('placed', data)
 

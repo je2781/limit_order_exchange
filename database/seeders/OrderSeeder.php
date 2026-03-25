@@ -10,16 +10,16 @@ class OrderSeeder extends Seeder
 {
     public function run(): void
     {
-        $user = User::first();
+          $buyer = User::firstWhere('email', 'buyer@example.com');
 
-        if (!$user) {
-            $this->command->warn('No users found. Run UserSeeder first.');
+         if (!$buyer) {
+            $this->command->warn('Buyer user not found. Run UserSeeder first.');
             return;
         }
 
         Order::insert([
             [
-                'user_id'    => $user->id,
+                'user_id'    => $buyer->id,
                 'symbol'     => 'BTC',
                 'side'       => 'buy',
                 'price'      => 95000.00,
@@ -27,19 +27,9 @@ class OrderSeeder extends Seeder
                 'status'     => 1,
                 'created_at' => now(),
                 'updated_at' => now(),
-            ],
-            [
-                'user_id'    => $user->id,
-                'symbol'     => 'BTC',
-                'side'       => 'sell',
-                'price'      => 96000.00,
-                'amount'     => 0.01,
-                'status'     => 1,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ],
+            ]
         ]);
 
-        $this->command->info('2 orders seeded.');
+        $this->command->info('1 order seeded.');
     }
 }

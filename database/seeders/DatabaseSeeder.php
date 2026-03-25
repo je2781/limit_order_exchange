@@ -18,6 +18,7 @@ class DatabaseSeeder extends Seeder
        $this->call([
             \Database\Seeders\UserSeeder::class,
             \Database\Seeders\OrderSeeder::class,
+            \Database\Seeders\AssetSeeder::class,
         ]);
     }
 }

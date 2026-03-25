@@ -103,23 +103,22 @@ const orderbookVolume = computed(() => {
 
 // ─── API ──────────────────────────────────────────────────────────────────────
 async function endSession() {
-  await axios.post('/logout')
-  window.location.href = '/login'
+  await axios.post('/api/logout')
 }
 
 async function fetchProfile() {
-  const { data } = await axios.get<Profile>('/profile')
+  const { data } = await axios.get<Profile>('/api/profile')
   profile.value = data
 }
 
 async function fetchOrders() {
-  const { data } = await axios.get(`/orders?symbol=${selectedSymbol.value}`)
+  const { data } = await axios.get(`/api/orders?symbol=${selectedSymbol.value}`)
   orderbook.value = data as any
 }
 
 async function fetchAllOrders() {
   const results = await Promise.all(
-    symbols.map(s => axios.get(`/orders?symbol=${s}`).then(r => r.data))
+    symbols.map(s => axios.get(`/api/orders?symbol=${s}`).then(r => r.data))
   )
   const all: Order[] = []
   results.forEach((r: any) => {
@@ -230,7 +229,7 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
           <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           <span class="text-xs tracking-[0.2em] uppercase text-zinc-400">Wallet Overview</span>
         </div>
-        <div class="inine-flex gap-3 flex-row items-center">
+        <div class="inline-flex gap-3 flex-row items-center">
                 <!-- Trigger button -->
             <button
                 @click="showOrderModal = true"
@@ -239,7 +238,7 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
                 + Place Order
             </button>
             <form @submit.prevent="endSession">
-                <button class="text-xs text-zinc-400 font-semibold tracking-widest" type="submit">LOGOUT</button>
+                <button class="text-xs text-zinc-400 font-semibold tracking-widest cursor-pointer" type="submit">LOGOUT</button>
             </form>
         </div>
       </header>
@@ -431,8 +430,46 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
                 <span class="ml-auto text-[10px] text-zinc-600 tracking-widest">{{ filteredOrders.length }}/{{ orders.length }}</span>
               </div>
 
-              <!-- Table -->
-              <div class="overflow-x-auto">
+               <!-- Empty state — no orders at all -->
+              <div v-if="orders.length === 0" class="flex flex-col items-center justify-center py-16 gap-4">
+                <div class="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center">
+                  <svg class="w-5 h-5 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                </div>
+                <div class="text-center">
+                  <p class="text-zinc-400 text-sm font-semibold mb-1">No orders yet</p>
+                  <p class="text-zinc-600 text-xs tracking-wide">Place your first limit order to get started</p>
+                </div>
+                <button
+                  @click="showOrderModal = true"
+                  class="mt-2 px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold tracking-[0.15em] uppercase rounded-lg transition-all active:scale-[0.98]"
+                >
+                  + Place Order
+                </button>
+              </div>
+
+              <!-- Empty state — orders exist but filters return nothing -->
+              <div v-else-if="filteredOrders.length === 0" class="flex flex-col items-center justify-center py-16 gap-3">
+                <div class="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center">
+                  <svg class="w-5 h-5 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
+                  </svg>
+                </div>
+                <div class="text-center">
+                  <p class="text-zinc-400 text-sm font-semibold mb-1">No orders match</p>
+                  <p class="text-zinc-600 text-xs tracking-wide">Try adjusting or clearing your filters</p>
+                </div>
+                <button
+                  @click="resetFilters"
+                  class="mt-2 px-5 py-2 border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-zinc-200 text-xs font-bold tracking-[0.15em] uppercase rounded-lg transition-all"
+                >
+                  Clear Filters
+                </button>
+              </div>
+
+              <!-- Table — only shown when there are results -->
+              <div v-else class="overflow-x-auto">
                 <table class="w-full text-xs">
                   <thead>
                     <tr class="text-zinc-600 uppercase tracking-widest border-b border-zinc-800">
