@@ -26,6 +26,9 @@ const notification = ref<{ msg: string; type: 'success' | 'error' } | null>(null
 
 const showOrderModal = ref(false)
 
+const openMenuId = ref<number | null>(null)
+const cancellingId = ref<number | null>(null)
+
 // ─── Filters ──────────────────────────────────────────────────────────────────
 
 const filterSymbol = ref<string>('ALL')
@@ -104,6 +107,24 @@ async function onOrderPlaced(sym: string) {
   showNotification('Order placed successfully', 'success')
 }
 
+// Cancel order action
+async function cancelOrder(id: number) {
+  cancellingId.value = id
+  openMenuId.value = null
+  try {
+    await axios.post(`/api/orders/${id}/cancel`)
+    // Remove from orders list or mark as cancelled
+    const order = orders.value.find(o => o.id === id)
+    if (order) order.status = 3
+    await Promise.all([fetchProfile(), fetchOrders(), fetchAllOrders()])
+    showNotification('Order cancelled successfully', 'success')
+  } catch (err: any) {
+    showNotification(err?.response?.data?.message ?? 'Failed to cancel order', 'error')
+  } finally {
+    cancellingId.value = null
+  }
+}
+
 // ─── Real-time ────────────────────────────────────────────────────────────────
 
 let echo: Echo<'pusher'> | null = null
@@ -117,7 +138,7 @@ function setupEcho() {
   })
 
   echo.private(`user.${userId.value}`)
-    .listen('OrderMatched', (e: { trade: Trade; fee: number }) => {
+    .listen('OrderMatched', async (e: { trade: Trade; fee: number }) => {
       recentTrades.value.unshift(e)
       if (recentTrades.value.length > 10) recentTrades.value.pop()
 
@@ -132,8 +153,7 @@ function setupEcho() {
         return o
       })
 
-      fetchProfile()
-      fetchOrders()
+      await Promise.all([fetchProfile(), fetchOrders(), fetchAllOrders()])
 
       showNotification(
         `Matched: ${e.trade.amount} ${e.trade.symbol} @ $${Number(e.trade.price).toLocaleString()} · fee $${Number(e.fee).toFixed(2)}`,
@@ -147,15 +167,26 @@ function showNotification(msg: string, type: 'success' | 'error' = 'success') {
   setTimeout(() => (notification.value = null), 4000)
 }
 
+// Close dropdown when clicking outside
+function onDocumentClick() {
+  openMenuId.value = null
+}
+
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
   await Promise.all([fetchProfile(), fetchOrders(), fetchAllOrders()])
   loading.value = false
   setupEcho()
+
+  document.addEventListener('click', onDocumentClick)
+
 })
 
-onUnmounted(() => echo?.disconnect())
+onUnmounted(() => {
+  echo?.disconnect()
+  document.removeEventListener('click', onDocumentClick)
+})
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -210,7 +241,7 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
                 <!-- Trigger button -->
             <button
                 @click="showOrderModal = true"
-                class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold tracking-[0.15em] uppercase rounded-lg transition-all active:scale-[0.98]"
+                class="px-6 py-3 bg-emerald-500 sm:inline-block hidden hover:bg-emerald-400 text-black text-xs font-bold tracking-[0.15em] uppercase rounded-lg transition-all active:scale-[0.98]"
             >
                 + Place Order
             </button>
@@ -279,23 +310,23 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
           <div class="xl:col-span-2 flex flex-col gap-6">
 
             <!-- Orderbook + Volume -->
-            <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
+            <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4 md:p-6">
               <div class="flex items-center justify-between mb-5">
                 <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500">Orderbook</p>
-                <div class="flex gap-1">
+                <div class="flex flex-wrap gap-1">
                   <button
                     v-for="sym in symbols" :key="sym"
                     @click="selectSymbol(sym)"
                     :class="[
-                      'px-3 py-1 rounded text-[11px] font-bold tracking-widest transition-all',
+                      'px-2.5 py-1 rounded text-[11px] font-bold tracking-widest transition-all',
                       selectedSymbol === sym ? 'bg-emerald-500 text-black' : 'text-zinc-500 hover:text-zinc-300 border border-zinc-800 hover:border-zinc-600'
                     ]"
                   >{{ sym }}</button>
                 </div>
               </div>
 
-              <!-- Volume stats -->
-              <div class="grid grid-cols-4 gap-2 mb-4">
+              <!-- Volume stats — 2 cols on mobile, 4 on md+ -->
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
                 <div class="bg-zinc-800/50 rounded-lg px-3 py-2">
                   <p class="text-[9px] uppercase tracking-widest text-zinc-600 mb-1">Best Bid</p>
                   <p class="text-xs font-bold text-emerald-400 tabular-nums">{{ orderbookVolume.bestBid ? usd(orderbookVolume.bestBid) : '—' }}</p>
@@ -329,7 +360,8 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
                 </div>
               </div>
 
-              <div class="grid grid-cols-2 gap-4">
+              <!-- Bids + Asks — stack on mobile, side by side on sm+ -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <p class="text-[10px] uppercase tracking-widest text-emerald-500 mb-2">Bids</p>
                   <div class="grid grid-cols-2 text-[10px] text-zinc-600 uppercase tracking-widest mb-1 px-1">
@@ -358,7 +390,7 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
             </div>
 
             <!-- Order history + filters -->
-            <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
+            <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4 md:p-6">
               <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-2">
                   <p class="text-[10px] tracking-[0.2em] uppercase text-zinc-500">Order History</p>
@@ -371,9 +403,8 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
                 </button>
               </div>
 
-              <!-- Filters -->
+              <!-- Filters — wrap gracefully on small screens -->
               <div class="flex flex-wrap gap-2 mb-4 items-center">
-
                 <div class="relative">
                   <select v-model="filterSymbol" class="appearance-none bg-zinc-800 border border-zinc-700 text-zinc-300 text-[11px] rounded-lg px-3 py-1.5 pr-7 focus:outline-none focus:border-zinc-500 cursor-pointer">
                     <option value="ALL">All Symbols</option>
@@ -386,7 +417,7 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
 
                 <div class="flex gap-0.5 bg-zinc-800 border border-zinc-700 rounded-lg p-0.5">
                   <button v-for="s in (['ALL', 'buy', 'sell'] as const)" :key="s" @click="filterSide = s"
-                    :class="['px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-widest transition-all',
+                    :class="['px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-widest transition-all',
                       filterSide === s
                         ? s === 'buy' ? 'bg-emerald-500 text-black' : s === 'sell' ? 'bg-rose-500 text-white' : 'bg-zinc-600 text-white'
                         : 'text-zinc-500 hover:text-zinc-300']"
@@ -397,7 +428,7 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
                   <button
                     v-for="[val, label] in ([['ALL','All'],['1','Open'],['2','Filled'],['3','Cancelled']] as [string,string][])"
                     :key="val" @click="filterStatus = val as any"
-                    :class="['px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-widest transition-all',
+                    :class="['px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-widest transition-all',
                       filterStatus === val
                         ? val === '1' ? 'bg-amber-500/30 text-amber-300' : val === '2' ? 'bg-emerald-500/30 text-emerald-300' : val === '3' ? 'bg-zinc-600 text-zinc-300' : 'bg-zinc-600 text-white'
                         : 'text-zinc-500 hover:text-zinc-300']"
@@ -407,7 +438,7 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
                 <span class="ml-auto text-[10px] text-zinc-600 tracking-widest">{{ filteredOrders.length }}/{{ orders.length }}</span>
               </div>
 
-               <!-- Empty state — no orders at all -->
+              <!-- Empty — no orders -->
               <div v-if="orders.length === 0" class="flex flex-col items-center justify-center py-16 gap-4">
                 <div class="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center">
                   <svg class="w-5 h-5 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -418,15 +449,12 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
                   <p class="text-zinc-400 text-sm font-semibold mb-1">No orders yet</p>
                   <p class="text-zinc-600 text-xs tracking-wide">Place your first limit order to get started</p>
                 </div>
-                <button
-                  @click="showOrderModal = true"
-                  class="mt-2 px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold tracking-[0.15em] uppercase rounded-lg transition-all active:scale-[0.98]"
-                >
+                <button @click="showOrderModal = true" class="mt-2 px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold tracking-[0.15em] uppercase rounded-lg transition-all active:scale-[0.98]">
                   + Place Order
                 </button>
               </div>
 
-              <!-- Empty state — orders exist but filters return nothing -->
+              <!-- Empty — filters return nothing -->
               <div v-else-if="filteredOrders.length === 0" class="flex flex-col items-center justify-center py-16 gap-3">
                 <div class="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center">
                   <svg class="w-5 h-5 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -437,31 +465,32 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
                   <p class="text-zinc-400 text-sm font-semibold mb-1">No orders match</p>
                   <p class="text-zinc-600 text-xs tracking-wide">Try adjusting or clearing your filters</p>
                 </div>
-                <button
-                  @click="resetFilters"
-                  class="mt-2 px-5 py-2 border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-zinc-200 text-xs font-bold tracking-[0.15em] uppercase rounded-lg transition-all"
-                >
+                <button @click="resetFilters" class="mt-2 px-5 py-2 border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-zinc-200 text-xs font-bold tracking-[0.15em] uppercase rounded-lg transition-all">
                   Clear Filters
                 </button>
               </div>
 
-              <!-- Table — only shown when there are results -->
-              <div v-else class="overflow-x-auto">
-                <table class="w-full text-xs">
+              <!-- Table -->
+              <div v-else class="overflow-x-auto -mx-4 md:mx-0">
+                <table class="w-full text-xs min-w-[520px] px-4 md:px-0">
                   <thead>
                     <tr class="text-zinc-600 uppercase tracking-widest border-b border-zinc-800">
-                      <th class="text-left pb-3 font-normal">ID</th>
+                      <th class="text-left pb-3 font-normal pl-4 md:pl-0">ID</th>
                       <th class="text-left pb-3 font-normal">Symbol</th>
                       <th class="text-left pb-3 font-normal">Side</th>
                       <th class="text-right pb-3 font-normal">Price</th>
                       <th class="text-right pb-3 font-normal">Amount</th>
                       <th class="text-right pb-3 font-normal">Volume</th>
                       <th class="text-right pb-3 font-normal">Status</th>
+                      <th class="pb-3 w-8"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="order in filteredOrders" :key="order.id" class="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors">
-                      <td class="py-3 text-zinc-600">#{{ order.id }}</td>
+                    <tr
+                      v-for="order in filteredOrders" :key="order.id"
+                      class="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors group relative"
+                    >
+                      <td class="py-3 text-zinc-600 pl-4 md:pl-0">#{{ order.id }}</td>
                       <td class="py-3 font-semibold text-zinc-200">{{ order.symbol }}</td>
                       <td class="py-3">
                         <span :class="order.side === 'buy' ? 'text-emerald-400' : 'text-rose-400'" class="uppercase tracking-widest">{{ order.side }}</span>
@@ -474,10 +503,45 @@ const num = (v: number, dp = 8) => Number(v).toFixed(dp)
                           {{ statusLabel(order.status) }}
                         </span>
                       </td>
-                    </tr>
-                    <tr v-if="filteredOrders.length === 0">
-                      <td colspan="7" class="py-8 text-center text-zinc-700 text-xs tracking-widest uppercase">
-                        {{ orders.length > 0 ? 'No orders match filters' : 'No orders yet' }}
+
+                      <!-- Actions column -->
+                      <td class="py-3 text-right pr-1 relative">
+                        <!-- Only show menu for open orders -->
+                        <div v-if="order.status === 1" class="relative inline-block">
+                          <button
+                            @click.stop="openMenuId = openMenuId === order.id ? null : order.id"
+                            class="w-6 h-6 flex items-center justify-center rounded text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
+                            :class="{ 'opacity-100': openMenuId === order.id }"
+                          >
+                            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                              <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
+                            </svg>
+                          </button>
+
+                          <!-- Dropdown -->
+                          <Transition
+                            enter-active-class="transition duration-100 ease-out"
+                            enter-from-class="scale-95 opacity-0"
+                            leave-active-class="transition duration-75 ease-in"
+                            leave-to-class="scale-95 opacity-0"
+                          >
+                            <div
+                              v-if="openMenuId === order.id"
+                              class="absolute right-0 top-8 z-30 w-36 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl shadow-black/40 overflow-hidden"
+                            >
+                              <button
+                                @click.stop="cancelOrder(order.id)"
+                                :disabled="cancellingId === order.id"
+                                class="w-full flex items-center gap-2 px-3 py-2.5 text-[11px] font-semibold text-rose-400 hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                                {{ cancellingId === order.id ? 'Cancelling...' : 'Cancel Order' }}
+                              </button>
+                            </div>
+                          </Transition>
+                        </div>
                       </td>
                     </tr>
                   </tbody>
