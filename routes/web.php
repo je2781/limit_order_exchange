@@ -27,7 +27,7 @@ Route::post('/api/logout', function () {
     Auth::logout();
 
     return redirect('/login');
-})->middleware('auth:sanctum')->name('logout');
+})->middleware('auth')->name('logout');
 
 Route::middleware(['auth:sanctum'])->get('/', fn() => inertia('Wallet'))->name('wallet');
 
