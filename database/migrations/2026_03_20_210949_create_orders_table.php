@@ -18,6 +18,7 @@ return new class extends Migration
             $table->enum('side', ['buy', 'sell']);
             $table->decimal('price', 18, 8);
             $table->decimal('amount', 18, 8);
+            $table->decimal('locked_volume', 18, 8)->default(0); // total locked for this order (cost + fee) for buys, 0 for sells
             $table->unsignedTinyInteger('status')->default(1);     // 1=open, 2=filled, 3=cancelled
             $table->timestamps();
         });

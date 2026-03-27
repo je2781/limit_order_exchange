@@ -46,13 +46,28 @@ class OrderController extends Controller
         $amount = $data['amount'];
         $cost   = $amount * $price; // USD cost of the order
 
-        $order = DB::transaction(function () use ($user, $symbol, $side, $price, $amount, $cost) {
+        $commission = 0.015; // 1.5% commission fee
+        
+        $order = DB::transaction(function () use ($user, $symbol, $side, $price, $amount, $cost, $commission) {
             if ($side === 'buy') {
                 if ($user->balance < $cost) {
                     abort(422, 'Insufficient USD balance.');
                 }
-                // Lock USD
-                $user->decrement('balance', $cost);
+                // Lock buyer's funds (cost + fee) for this order
+                $locked = $cost * (1 + $commission);
+         
+                $user->decrement('balance', $locked);
+                $user->increment('locked_balance', $locked);
+
+                return Order::create([
+                    'user_id' => $user->id,
+                    'symbol'  => $symbol,
+                    'side'    => $side,
+                    'price'   => $price,
+                    'amount'  => $amount,
+                    'status'  => 1,
+                    'locked_volume' => $locked,
+                ]);
 
             } else {
                 $asset = Asset::where('user_id', $user->id)
@@ -66,20 +81,22 @@ class OrderController extends Controller
                 // Move to locked
                 $asset->decrement('amount', $amount);
                 $asset->increment('locked_amount', $amount);
+
+                return Order::create([
+                    'user_id' => $user->id,
+                    'symbol'  => $symbol,
+                    'side'    => $side,
+                    'price'   => $price,
+                    'amount'  => $amount,
+                    'status'  => 1,
+                ]);
             }
 
-            return Order::create([
-                'user_id' => $user->id,
-                'symbol'  => $symbol,
-                'side'    => $side,
-                'price'   => $price,
-                'amount'  => $amount,
-                'status'  => 1,
-            ]);
+           
         });
 
         // Attempt match after order is committed
-        MatchOrder::dispatch($order);
+        MatchOrder::dispatch($order, $commission);
 
         return response()->json($order, 201);
     }
@@ -98,9 +115,14 @@ class OrderController extends Controller
             return response()->json(['message' => 'You are not authorised to cancel this order.'], 403);
         }
 
+
         DB::transaction(function () use ($order, $user) {
             if ($order->side === 'buy') {
-                $user->increment('balance', $order->amount * $order->price);
+                // Unlock buyer's funds (cost + fee)
+                $locked = $order->locked_volume; // total locked for this order (cost + fee);
+
+                $user->increment('balance', $locked);
+                $user->decrement('locked_balance', $locked);
             } else {
                 $asset = Asset::where('user_id', $user->id)
                     ->where('symbol', $order->symbol)

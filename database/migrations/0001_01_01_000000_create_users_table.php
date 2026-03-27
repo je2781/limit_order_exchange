@@ -19,6 +19,7 @@ return new class extends Migration
             $table->string('password');
             $table->rememberToken();
             $table->decimal('balance', 18, 8)->default(0);
+            $table->decimal('locked_balance', 18, 8)->default(0);   
             $table->timestamps();
         });
 

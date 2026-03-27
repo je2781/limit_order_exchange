@@ -9,12 +9,13 @@ use App\Models\Trade;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
+use Ramsey\Uuid\Type\Decimal;
 
 class MatchOrder implements ShouldQueue
 {
     use Queueable;
 
-    public function __construct(public Order $order) {}
+    public function __construct(public Order $order, public float $commission) {}
 
     public function handle(): void
     {
@@ -26,34 +27,48 @@ class MatchOrder implements ShouldQueue
         if (!$match) return;
 
         DB::transaction(function () use ($order, $match) {
-            $commission   = 0.015; // 1.5%
-            $usdVolume    = $order->amount * $order->price;
-            $fee          = round($usdVolume * $commission, 8);
+            $commission   = $this->commission; // 1.5%
 
             // Identify buyer and seller
             [$buyOrder, $sellOrder] = $order->side === 'buy'
                 ? [$order, $match]
                 : [$match, $order];
 
+            // 🔒 Lock both orders for update to prevent race conditions
+            $buyOrder  = Order::where('id', $buyOrder->id)->lockForUpdate()->first();
+            $sellOrder = Order::where('id', $sellOrder->id)->lockForUpdate()->first();
+
             $buyer  = $buyOrder->user;
             $seller = $sellOrder->user;
 
+            // ✅ Determine actual matched amount
+            $matchAmount = $buyOrder->amount; // full match only for simplicity
+
+            $matchPrice = $sellOrder->price; // Trade executes at the sell price
+
+            $usdVolume = $matchAmount * $matchPrice;
+            $fee = round($usdVolume * $commission, 8);
+
             // --- Settle buyer ---
             // Buyer locked USD at their order price, match happens at sell price
-            $actualCost   = $order->amount * $match->price;
-            $lockedCost   = $buyOrder->amount * $buyOrder->price;
-            $refund       = $lockedCost - $actualCost; // refund price difference if any
+            $lockedCost = $buyOrder->locked_volume; // total locked for this order (cost + fee);
+            $actualCost = $usdVolume;
+            $refund     = $lockedCost - ($actualCost + $fee); // refund price difference if any
 
-            // Deduct fee from buyer's perspective (from the USD they locked)
-            // Refund overpaid USD minus the fee
-            $buyer->increment('balance', max(0, $refund - $fee));
+            // remove ALL locked funds for this order
+            $buyer->decrement('locked_balance', $lockedCost);
+
+            // Refund overpaid USD back to buyer (if buy price > match price)
+            if ($refund > 0) {
+                $buyer->increment('balance', $refund);
+            }        
 
             // Credit buyer with the asset
             $buyerAsset = Asset::firstOrCreate(
                 ['user_id' => $buyer->id, 'symbol' => $buyOrder->symbol],
                 ['amount' => 0, 'locked_amount' => 0]
             );
-            $buyerAsset->increment('amount', $buyOrder->amount);
+            $buyerAsset->increment('amount', $matchAmount);
 
             // --- Settle seller ---
             // Release seller's locked asset
@@ -62,25 +77,25 @@ class MatchOrder implements ShouldQueue
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            $sellerAsset->decrement('locked_amount', $buyOrder->amount);
+              // decrement ONLY matched portion
+            $sellerAsset->decrement('locked_amount', $matchAmount);
 
             // Credit seller with USD (at matched price, no fee deducted from seller)
-            $sellerUsd = $buyOrder->amount * $match->price;
-            $seller->increment('balance', $sellerUsd);
+            $seller->increment('balance', $usdVolume);
 
-            // --- Mark both orders filled ---
-            $buyOrder->update(['status'  => 2]);
-            if($sellerAsset->locked_amount == 0) {
-                $sellOrder->update(['status' => 2]);
-            }
+            // ======================
+            // 📉 ORDERS (FULL FILL)
+            // ======================
+            $buyOrder->update(['status' => 2]);
+            $sellOrder->update(['status' => 2]);
 
             // --- Record trade ---
             $trade = Trade::create([
                 'buy_order_id'  => $buyOrder->id,
                 'sell_order_id' => $sellOrder->id,
                 'symbol'        => $buyOrder->symbol,
-                'price'         => $match->price,
-                'amount'        => $buyOrder->amount,
+                'price'         => $matchPrice,
+                'amount'        => $matchAmount,
             ]);
 
             // --- Broadcast to both parties ---
@@ -99,18 +114,18 @@ class MatchOrder implements ShouldQueue
             return $query
                 ->where('side', 'sell')
                 ->where('price', '<=', $order->price)
+                ->where('amount', $order->amount) // full match only for simplicity
                 ->orderBy('price', 'asc')
                 ->orderBy('created_at', 'asc')
-                ->lockForUpdate()
                 ->first();
         } else {
             // Match with highest available buy at or above sell price
             return $query
                 ->where('side', 'buy')
                 ->where('price', '>=', $order->price)
+                ->where('amount', $order->amount) // full match only for simplicity
                 ->orderBy('price', 'desc')
                 ->orderBy('created_at', 'asc')
-                ->lockForUpdate()
                 ->first();
         }
     }
