@@ -154,7 +154,7 @@ function setupEcho() {
         return o
       })
 
-      await Promise.all([fetchProfile(), fetchOrders()])
+      await Promise.all([fetchProfile(), fetchOrders(), fetchAllOrders()])
 
       showNotification(
         `Matched: ${e.trade.amount} ${e.trade.symbol} @ $${Number(e.trade.price).toLocaleString()} · fee $${Number(e.fee).toFixed(2)}`,
