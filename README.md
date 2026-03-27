@@ -16,7 +16,7 @@ For frontend I started with the wallet, and split the viewport into left and rig
 
 ## How to run the app
 
-Run (docker compose up) from the main directory to compile for development. Check credentials in database/seeders/UserSeeder.php for seller and buyer login. Open the seller/buyer accounts on separate browsers to see the real-time psher updates when a match is made 
+Run (docker compose up) from the main directory to compile for development. Check credentials in database/seeders/UserSeeder.php for seller and buyer login. Open the seller/buyer accounts on separate browsers to see the real-time pusher updates when a full match is made 
 
 
 

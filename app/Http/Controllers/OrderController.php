@@ -54,7 +54,7 @@ class OrderController extends Controller
                     abort(422, 'Insufficient USD balance.');
                 }
                 // Lock buyer's funds (cost + fee) for this order
-                $locked = $cost * (1 + $commission);
+                $locked = $cost * (1 + $commission); // lock fee upfront to prevent abuse
          
                 $user->decrement('balance', $locked);
                 $user->increment('locked_balance', $locked);
