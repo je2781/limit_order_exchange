@@ -7,8 +7,6 @@ import Pusher from 'pusher-js'
 import LimitOrderForm from '@/components/LimitOrderForm.vue'
 import { Order, OrderPayload, Profile, Trade } from '@/types/general'
 
-window.Pusher = Pusher
-
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -130,11 +128,14 @@ async function cancelOrder(id: number) {
 let echo: Echo<'pusher'> | null = null
 
 function setupEcho() {
+  window.Pusher = Pusher
+
   echo = new Echo<'pusher'>({
     broadcaster: 'pusher',
     key: import.meta.env.VITE_PUSHER_APP_KEY,
     cluster: import.meta.env.VITE_PUSHER_APP_CLUSTER,
     forceTLS: true,
+    Pusher
   })
 
   echo.private(`user.${userId.value}`)
@@ -153,7 +154,7 @@ function setupEcho() {
         return o
       })
 
-      await Promise.all([fetchProfile(), fetchOrders(), fetchAllOrders()])
+      await Promise.all([fetchProfile(), fetchOrders()])
 
       showNotification(
         `Matched: ${e.trade.amount} ${e.trade.symbol} @ $${Number(e.trade.price).toLocaleString()} · fee $${Number(e.fee).toFixed(2)}`,

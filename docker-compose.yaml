@@ -52,16 +52,17 @@ services:
       MYSQL_DATABASE: ${DB_DATABASE}
     networks:
       - app
-  scheduler:
-    image: php:8.4-cli
-    container_name: laravel-scheduler
-    volumes:
-      - .:/var/www
-    entrypoint: |
-      sh -c "while true; do
-        php /var/www/artisan schedule:run >> /dev/null 2>&1
-        sleep 60
-      done"
+  queue-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: php artisan queue:work redis --sleep=3 --tries=3 --max-time=3600
+    restart: unless-stopped
+    depends_on:
+      - admin_db
+      - redis
+    networks:
+      - app
 
 volumes:
   admin_db_data:

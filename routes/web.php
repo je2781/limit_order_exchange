@@ -4,7 +4,6 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\OrderController;
 use Illuminate\Support\Facades\Auth;
-use Laravel\Fortify\Features;   
 
 
 // Route::inertia('/', 'Welcome', [
@@ -23,13 +22,13 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 
-Route::post('/api/logout', function () {
+Route::middleware('auth')->post('/api/logout', function () {
     Auth::logout();
 
     return redirect('/login');
-})->middleware('auth')->name('logout');
+})->name('logout');
 
-Route::middleware(['auth:sanctum'])->get('/', fn() => inertia('Wallet'))->name('wallet');
+Route::middleware(['auth'])->get('/', fn() => inertia('Wallet'))->name('wallet');
 
 
 require __DIR__.'/settings.php';

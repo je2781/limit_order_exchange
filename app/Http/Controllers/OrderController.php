@@ -88,17 +88,20 @@ class OrderController extends Controller
     public function cancel(Request $request, int $id)
     {
         $user  = $request->user();
+
         $order = Order::where('id', $id)
-            ->where('user_id', $user->id)
             ->where('status', 1)
-            ->firstOrFail();
+            ->firstOrFail(); // find the order first
+
+        // Explicit ownership check — 403 is more accurate than 404 here
+        if ($order->user_id !== $user->id) {
+            return response()->json(['message' => 'You are not authorised to cancel this order.'], 403);
+        }
 
         DB::transaction(function () use ($order, $user) {
             if ($order->side === 'buy') {
-                // Refund locked USD
                 $user->increment('balance', $order->amount * $order->price);
             } else {
-                // Unlock asset
                 $asset = Asset::where('user_id', $user->id)
                     ->where('symbol', $order->symbol)
                     ->lockForUpdate()
@@ -108,7 +111,7 @@ class OrderController extends Controller
                 $asset->decrement('locked_amount', $order->amount);
             }
 
-            $order->update(['status' => 3]); // cancelled
+            $order->update(['status' => 3]);
         });
 
         return response()->json(['message' => 'Order cancelled.']);

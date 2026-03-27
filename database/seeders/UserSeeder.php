@@ -30,7 +30,7 @@ class UserSeeder extends Seeder
                 'name'              => 'Buyer',
                 'password'          => Hash::make('public'),
                 'email_verified_at' => now(),
-                'balance'           => 10000.00,
+                'balance'           => 600000.00,
             ]
         );
 

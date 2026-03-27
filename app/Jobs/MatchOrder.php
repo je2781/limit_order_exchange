@@ -62,15 +62,17 @@ class MatchOrder implements ShouldQueue
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            $sellerAsset->decrement('locked_amount', $sellOrder->amount);
+            $sellerAsset->decrement('locked_amount', $buyOrder->amount);
 
             // Credit seller with USD (at matched price, no fee deducted from seller)
-            $sellerUsd = $sellOrder->amount * $match->price;
+            $sellerUsd = $buyOrder->amount * $match->price;
             $seller->increment('balance', $sellerUsd);
 
             // --- Mark both orders filled ---
             $buyOrder->update(['status'  => 2]);
-            $sellOrder->update(['status' => 2]);
+            if($sellerAsset->locked_amount == 0) {
+                $sellOrder->update(['status' => 2]);
+            }
 
             // --- Record trade ---
             $trade = Trade::create([

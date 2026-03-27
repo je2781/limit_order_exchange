@@ -3,24 +3,21 @@ title: Limit Order Exchange
 description: A trading platform
 author: Joshua Eze
 created:  2026 Mar 25
-updated: 2026 Mar 25
+updated: 2026 Mar 27
 ---
 
 Exchange Engine
 =========
 
 ## Development
-I started with the project structure, and moved the routes into the (pages) folder. Authentication followed, with storing mock data in the login page. I later onto the wallet page, with all its components, while doing its responsiveness. Finally worked on the modals, with responsive as well.
+I started with the project structure, docker setup, created migrations, routes, controllers, relationships, and business functions. I then setup pusher web socket, an authenticated broadcast channel, created a queued job to broadcast "OrderMatched" event for every sell or buy.
 
-For backend I started with integrating TypeORM with the entities, before creating services/controllers/modules for each entity. Tested the routes on postman successfully, and added authentication, and data validation.
+For frontend I started with the wallet, and split the viewport into left and right with the left side displaying user asset, wallet, socket transactions. The right side consumed a  lot of dev time, taking into accoutn validation, tabulizing the order list. I finally created a modal to show the limit order form for placing orders.
 
-## How to run the app (frontend)
+## How to run the app
 
-Run (npm run dev) from the main directory to compile for development. To test run (npm run test). 
+Run (docker compose up) from the main directory to compile for development. Check credentials in database/seeders/UserSeeder.php for seller and buyer login. Open the seller/buyer accounts on separate browsers to see the real-time psher updates when a match is made 
 
-## How to run the app (backend)
-
-Run (docker compose up mysql nestjs) from the main directory to compile for development. To test run (npm run test:e2e). Note have docker desktop installed and open before compiling for the backend. __And make sure only test-sql service container is running for tests, and only mysql service container for development/production.__ 
 
 
 
